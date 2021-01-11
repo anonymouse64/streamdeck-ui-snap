@@ -1,7 +1,8 @@
 name: streamdeck-ui
-base: core20
-version: "0.1" # just for humans, typically '1.2+git' or '1.3.2'
-summary: A Linux compatible UI for the Elgato Stream Deck
+# TODO: update to core20 when the kde-neon extension works for core20 snaps
+base: core18
+adopt-info: streamdeck-ui
+summary: A service, Web Interface, and UI for using a Stream Deck with your computer
 description: |
   A Linux compatible UI for the Elgato Stream Deck.
   Key Features
@@ -15,14 +16,16 @@ description: |
   * Import/Export: Supports saving and restoring Stream Deck configuration.
   * Communication with the Streamdeck is powered by the Python Elgato Stream Deck Library.
 
+license: MIT
+
 grade: stable
 confinement: strict
 
 apps:
   streamdeck-ui:
-    command-chain:
-      - bin/desktop-launch
     command: bin/streamdeck
+    extensions:
+      - kde-neon
     plugs:
       - home
       - removable-media
@@ -31,38 +34,36 @@ apps:
       - hardware-observe
 
 parts:
-  desktop-qt5:
-    source: https://github.com/ubuntu/snapcraft-desktop-helpers.git
-    source-subdir: qt
-    plugin: make
-    make-parameters: ["FLAVOR=qt5"]
-    build-packages:
-      - qtbase5-dev
-      - dpkg-dev
-    stage-packages:
-      - libxkbcommon0
-      - ttf-ubuntu-font-family
-      - dmz-cursor-theme
-      - light-themes
-      - adwaita-icon-theme
-      - gnome-themes-standard
-      - shared-mime-info
-      - libqt5gui5
-      - libgdk-pixbuf2.0-0
-      - libqt5svg5 # for loading icon themes which are svg
-      - try: [appmenu-qt5] # not available on core18
-      - locales-all
   streamdeck-ui:
-    after: [desktop-qt5]
     plugin: python
     source: https://github.com/timothycrosley/streamdeck-ui.git
     build-packages:
       - libudev-dev
       - libusb-1.0-0-dev
-      - python3-pip
-    stage-packages:
-      - libhidapi-hidraw0
+    # to get the version number out of the pyproject.toml file
+    build-snaps:
+      - remarshal
+      - jq
+
+    # TODO: figure out which set of python-packages + apt packages should be used,
+    # with libhidapi-hidraw0, streamdeck-ui complains:
+    # 'The libhidapi-hidraw0 backend is currently blacklisted for StreamDeck devices.'
+
+    # stage-packages:
+    #   - libhidapi-hidraw0
+    python-packages:
+      - hid
+
     override-build: |
-      pip3 install --user dephell[full]
-      PATH=$HOME/.local/bin:$PATH dephell deps convert --from-path pyproject.toml --from-format poetry --to-path setup.py --to-format setuppy
+      # install pip manually in the build environment so we can install dephell
+      # and use it to convert the poetry based pyproject.yoml to setuppy, which
+      # snapcraft's python plugin can then build by itself
+      PYTHONHOME=$SNAPCRAFT_PART_INSTALL/usr PYTHONUSERBASE=$SNAPCRAFT_PART_INSTALL $SNAPCRAFT_PART_INSTALL/usr/bin/python3 -m pip install --user pip==20.1
+      PYTHONHOME=$SNAPCRAFT_PART_INSTALL/usr PYTHONUSERBASE=$SNAPCRAFT_PART_INSTALL $SNAPCRAFT_PART_INSTALL/usr/bin/python3 -m pip install --user dephell[full]
+      PYTHONHOME=$SNAPCRAFT_PART_INSTALL/usr PYTHONUSERBASE=$SNAPCRAFT_PART_INSTALL dephell deps convert --from-path pyproject.toml --from-format poetry --to-path setup.py --to-format setuppy
       snapcraftctl build
+
+      # meh this is a bit silly and over-engineered but works properly to set 
+      # the version of the project
+      # we have to use `env -u ...` here due to https://bugs.launchpad.net/snapcraft/+bug/1911062
+      snapcraftctl set-version "$(env -u SNAPCRAFT_PART_INSTALL -u SNAPCRAFT_STAGE -- /snap/bin/toml2json $SNAPCRAFT_PART_BUILD/pyproject.toml | /snap/bin/jq -r '.tool.poetry.version')"
